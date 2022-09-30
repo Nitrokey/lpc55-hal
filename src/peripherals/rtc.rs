@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{convert::TryFrom, time::Duration};
 use crate::{
     raw,
     peripherals::{
@@ -59,5 +59,13 @@ impl Rtc<init_state::Enabled> {
         // After reset:
         // This bit can only be set after the RTC_ENA bit (bit 7) is set by a previous write operation.
         self.raw.ctrl.modify(|_,w| w.rtc_subsec_ena().set_bit() )
+    }
+
+    pub fn set_wake(&mut self, value: Duration) {
+        // TODO: handle overlong values
+        let millis = u16::try_from(value.as_millis()).expect("RTC wake value out of bounds");
+        unsafe {
+            self.raw.wake.write(|w| w.val().bits(millis));
+        }
     }
 }
