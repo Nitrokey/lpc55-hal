@@ -14,7 +14,7 @@ use crate::{
 
 pub use generic_array::{
     GenericArray,
-    typenum::{U16, U512},
+    typenum::{U8, U16, U512},
 };
 
 // one physical word of Flash consists of 128 bits (or 4 u32, or 16 bytes)
@@ -350,7 +350,7 @@ pub mod littlefs_params {
     pub const BLOCK_CYCLES: isize = -1;
 
     pub type CACHE_SIZE = U512;
-    pub type LOOKAHEADWORDS_SIZE = U16;
+    pub type LOOKAHEAD_SIZE = U8;
 }
 
 #[cfg(feature = "littlefs")]
@@ -399,7 +399,7 @@ macro_rules! littlefs2_filesystem {
             const BLOCK_CYCLES: isize = $crate::drivers::flash::littlefs_params::BLOCK_CYCLES;
 
             type CACHE_SIZE = $crate::drivers::flash::littlefs_params::CACHE_SIZE;
-            type LOOKAHEADWORDS_SIZE = $crate::drivers::flash::littlefs_params::LOOKAHEADWORDS_SIZE;
+            type LOOKAHEAD_SIZE = $crate::drivers::flash::littlefs_params::LOOKAHEAD_SIZE;
 
 
             fn read(&mut self, off: usize, buf: &mut [u8]) -> LfsResult<usize> {
@@ -483,7 +483,7 @@ macro_rules! littlefs2_prince_filesystem {
             const BLOCK_CYCLES: isize = $crate::drivers::flash::littlefs_params::BLOCK_CYCLES;
 
             type CACHE_SIZE = $crate::drivers::flash::littlefs_params::CACHE_SIZE;
-            type LOOKAHEADWORDS_SIZE = $crate::drivers::flash::littlefs_params::LOOKAHEADWORDS_SIZE;
+            type LOOKAHEAD_SIZE = $crate::drivers::flash::littlefs_params::LOOKAHEAD_SIZE;
 
 
             fn read(&mut self, off: usize, buf: &mut [u8]) -> LfsResult<usize> {
