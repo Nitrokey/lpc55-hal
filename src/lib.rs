@@ -166,6 +166,9 @@ pub struct Peripherals {
 
     // PRINCE
     pub prince: Prince,
+    
+    // PUF
+    pub puf: Puf,
 
     /// Random number generator
     pub rng: Rng,
@@ -329,6 +332,7 @@ impl From<(raw::Peripherals, raw::CorePeripherals)> for Peripherals {
             pfr: Pfr::new(),
             pmc: Pmc::from(p.PMC),
             prince: Prince::from(p.PRINCE),
+            puf: Puf::from(p.PUF),
             rng: Rng::from(p.RNG),
             rtc: Rtc::from(p.RTC),
             syscon: Syscon::from(p.SYSCON),
