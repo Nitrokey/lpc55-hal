@@ -45,6 +45,14 @@ pub enum KeyDestination {
 crate::wrap_stateful_peripheral!(Puf, PUF);
 
 impl<State> Puf<State> {
+    pub fn status(&self) -> u32 {
+        self.raw.stat.read().bits()
+    }
+
+    pub fn allow(&self) -> u32 {
+        self.raw.allow.read().bits()
+    }
+
     pub fn enabled(mut self, syscon: &mut Syscon) -> Puf<init_state::Enabled> {
         syscon.enable_clock(&mut self.raw);
         self.raw.pwrctrl.write(|w| {w.ramon().set_bit()});
