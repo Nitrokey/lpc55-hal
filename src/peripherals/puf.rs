@@ -1,12 +1,4 @@
-use crate::{
-    raw,
-    peripherals::{
-        syscon::Syscon,
-    },
-    typestates::{
-        init_state,
-    }
-};
+use crate::{peripherals::syscon::Syscon, raw, typestates::init_state};
 
 // Once a PUF is started, you can generate or derive keys.
 // Check NXP AN2324 for the best explanation.
@@ -25,6 +17,8 @@ impl PufStates for Enrolled {}
 /// PUF error
 #[derive(Debug)]
 pub enum Error {
+    /// PUF initialization failed.
+    InitializationFailed,
     /// PUF Command could not start
     CommandFailedToStart,
     /// PUF Command could not complete
@@ -36,31 +30,33 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 pub enum KeyDestination {
     AES = 0,
-    PRINCE1=1,
-    PRINCE2=2,
-    PRINCE3=3,
+    PRINCE1 = 1,
+    PRINCE2 = 2,
+    PRINCE3 = 3,
     OUTPUT,
 }
 
 crate::wrap_stateful_peripheral!(Puf, PUF);
 
 impl<State> Puf<State> {
-    pub fn enabled(mut self, syscon: &mut Syscon) -> Puf<init_state::Enabled> {
+    pub fn enabled(mut self, syscon: &mut Syscon) -> Result<Puf<init_state::Enabled>> {
         syscon.enable_clock(&mut self.raw);
-        self.raw.pwrctrl.write(|w| {w.ramon().set_bit()});
-        while self.raw.stat.read().busy().bit_is_set()
-        {
-        }
-
-        Puf {
-            raw: self.raw,
-            _state: init_state::Enabled(()),
+        self.raw.pwrctrl.write(|w| w.ramon().set_bit());
+        while self.raw.stat.read().busy().bit_is_set() {}
+        let stat = self.raw.stat.read();
+        if stat.error().bit_is_set() || stat.success().bit_is_clear() {
+            Err(Error::InitializationFailed)
+        } else {
+            Ok(Puf {
+                raw: self.raw,
+                _state: init_state::Enabled(()),
+            })
         }
     }
 
     pub fn disabled(mut self, syscon: &mut Syscon) -> Puf<init_state::Disabled> {
         syscon.disable_clock(&mut self.raw);
-        self.raw.pwrctrl.write(|w| {w.ramon().clear_bit()});
+        self.raw.pwrctrl.write(|w| w.ramon().clear_bit());
 
         Puf {
             raw: self.raw,
@@ -72,8 +68,9 @@ impl<State> Puf<State> {
 impl<T> Puf<init_state::Enabled<T>> {
     fn wait_for_cmd(&self) -> Result<()> {
         // Wait for command to start being busy or get an error
-        while self.raw.stat.read().busy().bit_is_clear() && self.raw.stat.read().error().bit_is_clear() {
-        }
+        while self.raw.stat.read().busy().bit_is_clear()
+            && self.raw.stat.read().error().bit_is_clear()
+        {}
 
         if self.raw.stat.read().error().bit_is_set() {
             return Err(Error::CommandFailedToStart);
@@ -93,7 +90,7 @@ impl<T> Puf<init_state::Enabled<T>> {
         while self.raw.stat.read().busy().bit_is_set() {
             if self.raw.stat.read().codeoutavail().bit_is_set() {
                 let word = self.raw.codeoutput.read().bits();
-                data[count..count+4].copy_from_slice( &word.to_ne_bytes() );
+                data[count..count + 4].copy_from_slice(&word.to_ne_bytes());
                 count += 4;
             }
         }
@@ -114,19 +111,24 @@ impl<T> Puf<init_state::Enabled<T>> {
     // key_code: Returned KC
     //  This is fed to a started PUF to derive a key.
     pub fn generate_key(&self, key_size: u32, key_index: u8, key_code: &mut [u8]) -> Result<()> {
-
         if self.raw.allow.read().allowsetkey().bit_is_clear() {
             return Err(Error::NotAllowed);
         }
         assert!(key_size >= 64);
         assert!(key_index < 16);
 
-        for i in 0..key_code.len() { key_code[i] = 0; }
+        for i in 0..key_code.len() {
+            key_code[i] = 0;
+        }
 
-        self.raw.keysize.write(|w| unsafe {w.bits( ((key_size >> 6) & 0x3f) as u32 )});
-        self.raw.keyindex.write(|w| unsafe {w.bits( ((key_index) & 0x0f) as u32 )});
+        self.raw
+            .keysize
+            .write(|w| unsafe { w.bits(((key_size >> 6) & 0x3f) as u32) });
+        self.raw
+            .keyindex
+            .write(|w| unsafe { w.bits(((key_index) & 0x0f) as u32) });
 
-        self.raw.ctrl.write(|w| {w.generatekey().set_bit()} );
+        self.raw.ctrl.write(|w| w.generatekey().set_bit());
 
         self.wait_for_cmd()?;
 
@@ -136,7 +138,13 @@ impl<T> Puf<init_state::Enabled<T>> {
         Ok(())
     }
 
-    pub fn set_key(&self, _key_size: u32, _key_index: u8, _user_key: &[u8], _key_code: &mut [u8]) -> Result<()>{
+    pub fn set_key(
+        &self,
+        _key_size: u32,
+        _key_index: u8,
+        _user_key: &[u8],
+        _key_code: &mut [u8],
+    ) -> Result<()> {
         unimplemented!();
     }
 
@@ -145,25 +153,24 @@ impl<T> Puf<init_state::Enabled<T>> {
     }
 
     // Put PUF into reset state.
-    pub fn reset(&self) -> (){
+    pub fn reset(&self) -> () {
         unimplemented!();
     }
-
 }
 // Must enroll once per device.  Enrolling consumes the PUF and device must be restarted.
-impl Puf<init_state::Enabled>
-{
-
+impl Puf<init_state::Enabled> {
     // Enroll a new key for the PUF.  Writes 1192-byte AC to buffer which should be stored in NV memory.
     // Enroll should occur once per device.
-    pub fn enroll(self, ac_buffer: &mut [u8; 1192]) -> Result< Puf<init_state::Enabled<Enrolled>> > {
+    pub fn enroll(self, ac_buffer: &mut [u8; 1192]) -> Result<Puf<init_state::Enabled<Enrolled>>> {
         if self.raw.allow.read().allowenroll().bit_is_clear() {
             return Err(Error::NotAllowed);
         }
 
-        for i in 0..ac_buffer.len() { ac_buffer[i] = 0; }
+        for i in 0..ac_buffer.len() {
+            ac_buffer[i] = 0;
+        }
 
-        self.raw.ctrl.write(|w| {w.enroll().set_bit()} );
+        self.raw.ctrl.write(|w| w.enroll().set_bit());
 
         self.wait_for_cmd()?;
 
@@ -171,18 +178,14 @@ impl Puf<init_state::Enabled>
 
         self.check_success()?;
 
-        Ok(Puf{
+        Ok(Puf {
             raw: self.raw,
             _state: init_state::Enabled(Enrolled),
         })
     }
 
-    pub fn start(self, ac_buffer: &[u8; 1192]) -> Result< Puf<init_state::Enabled<Started>> >{
-        if self.raw.allow.read().allowstart().bit_is_clear() {
-            return Err(Error::NotAllowed);
-        }
-
-        self.raw.ctrl.write(|w| { w.start().set_bit() } );
+    fn do_start(&mut self, ac_buffer: &[u8; 1192]) -> Result<()> {
+        self.raw.ctrl.write(|w| w.start().set_bit());
 
         self.wait_for_cmd()?;
 
@@ -190,32 +193,66 @@ impl Puf<init_state::Enabled>
         let mut i = 0;
         while self.raw.stat.read().busy().bit_is_set() {
             if self.raw.stat.read().codeinreq().bit_is_set() {
-                word_buf.copy_from_slice(&ac_buffer[i..i+4]);
+                word_buf.copy_from_slice(&ac_buffer[i..i + 4]);
                 let word = u32::from_ne_bytes(word_buf);
-                self.raw.codeinput.write(|w| unsafe{w.bits(word)});
+                self.raw.codeinput.write(|w| unsafe { w.bits(word) });
                 i += 4;
             }
         }
 
-        self.check_success()?;
+        self.check_success()
+    }
 
-        Ok(Puf{
+    /// Starts the PUF using the activation code.
+    ///
+    /// Fails if the PUF has already been started, e. g. by the ROM.
+    pub fn start(mut self, ac_buffer: &[u8; 1192]) -> Result<Puf<init_state::Enabled<Started>>> {
+        if self.raw.allow.read().allowstart().bit_is_clear() {
+            Err(Error::NotAllowed)
+        } else {
+            self.do_start(ac_buffer)?;
+
+            Ok(Puf {
+                raw: self.raw,
+                _state: init_state::Enabled(Started),
+            })
+        }
+    }
+
+    /// Starts the PUF using the activiation code or assumes that it has already been started.
+    ///
+    /// If the PUF has already been started, e. g. by the ROM, the start command is no longer
+    /// allowed.  In this case, we assume that the PUF has been started.
+    pub fn try_start(
+        mut self,
+        ac_buffer: &[u8; 1192],
+    ) -> Result<Puf<init_state::Enabled<Started>>> {
+        if self.raw.allow.read().allowstart().bit_is_set() {
+            self.do_start(ac_buffer)?;
+        }
+        Ok(Puf {
             raw: self.raw,
             _state: init_state::Enabled(Started),
         })
     }
-
 }
 
 impl Puf<init_state::Enabled<Started>> {
-    pub fn get_key(&self, key_destination: raw::puf::keyenable::KEY_A, key_code: &[u8], key: &mut [u8]) -> Result<usize> {
+    pub fn get_key(
+        &self,
+        key_destination: raw::puf::keyenable::KEY_A,
+        key_code: &[u8],
+        key: &mut [u8],
+    ) -> Result<usize> {
         if self.raw.allow.read().allowgetkey().bit_is_clear() {
             return Err(Error::NotAllowed);
         }
 
-        self.raw.keyenable.write(|w| { w.key().variant(key_destination) });
+        self.raw
+            .keyenable
+            .write(|w| w.key().variant(key_destination));
 
-        self.raw.ctrl.write(|w| {w.getkey().set_bit() } );
+        self.raw.ctrl.write(|w| w.getkey().set_bit());
 
         self.wait_for_cmd()?;
         let mut word_buf = [0u8; 4];
@@ -223,15 +260,15 @@ impl Puf<init_state::Enabled<Started>> {
         let mut count_out = 0;
         while self.raw.stat.read().busy().bit_is_set() {
             if self.raw.stat.read().codeinreq().bit_is_set() {
-                word_buf.copy_from_slice(&key_code[count_in .. count_in+4]);
+                word_buf.copy_from_slice(&key_code[count_in..count_in + 4]);
                 let word = u32::from_ne_bytes(word_buf);
-                self.raw.codeinput.write(|w| unsafe{w.bits(word)});
+                self.raw.codeinput.write(|w| unsafe { w.bits(word) });
                 count_in += 4;
             }
             if self.raw.stat.read().keyoutavail().bit_is_set() {
                 self.raw.keyindex.read().bits();
                 let word = self.raw.keyoutput.read().bits();
-                key[count_out..count_out+4].copy_from_slice( &word.to_ne_bytes() );
+                key[count_out..count_out + 4].copy_from_slice(&word.to_ne_bytes());
                 count_out += 4;
             }
         }
