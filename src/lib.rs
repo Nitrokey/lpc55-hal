@@ -135,6 +135,9 @@ pub struct Peripherals {
 
     // PRINCE
     pub prince: Prince,
+    
+    // PUF
+    pub puf: Puf,
 
     // PUF
     pub puf: Puf,
